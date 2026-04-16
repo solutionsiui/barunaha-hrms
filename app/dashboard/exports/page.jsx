@@ -1,0 +1,102 @@
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+import { useAuth } from "@/lib/auth-context";
+import { apiFetch, getToken } from "@/lib/api";
+import { useToast } from "@/hooks/useToast";
+
+export default function ExportsPage() {
+  const { role } = useAuth();
+  const isAccounts = role === "accounts";
+  const canSeeAnnexure = role === "accounts" || role === "admin";
+  const [month, setMonth] = useState(new Date().getMonth() + 1);
+  const [year, setYear] = useState(new Date().getFullYear());
+  const [department, setDepartment] = useState("");
+  const [employee, setEmployee] = useState("");
+  const [departments, setDepartments] = useState([]);
+  const [employees, setEmployees] = useState([]);
+  const [showToast, toastNode] = useToast();
+
+  useEffect(() => {
+    if (!isAccounts) apiFetch("/departments").then((data) => setDepartments(Array.isArray(data) ? data : [])).catch(() => {});
+    apiFetch("/employees").then((data) => setEmployees(Array.isArray(data) ? data : [])).catch(() => {});
+  }, [isAccounts]);
+
+  const token = useMemo(() => getToken(), []);
+
+  async function download(path, label) {
+    try {
+      const res = await fetch(`/api/proxy${path}`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+      if (!res.ok) throw new Error("Download failed");
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const contentDisposition = res.headers.get("content-disposition") || "";
+      const match = contentDisposition.match(/filename="?([^"]+)"?/i);
+      const suggestedName = match?.[1];
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = suggestedName || `${label.replace(/\s+/g, "_").toLowerCase()}`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      showToast(`Downloading ${label}...`);
+    } catch (error) {
+      showToast(error.message || "Download failed", "error");
+    }
+  }
+
+  const query = `month=${month}&year=${year}${employee ? `&emp_id=${employee}` : ""}${department ? `&department=${encodeURIComponent(department)}` : ""}`;
+  const bgvQuery = `${employee ? `emp_id=${employee}&` : ""}department=${encodeURIComponent(department || "All")}`;
+
+  return (
+    <div>
+      <div className="page-header">
+        <h1 className="syne" style={{ fontSize: 28, fontWeight: 800 }}>Exports & Reports</h1>
+        <p style={{ color: "var(--muted)", marginTop: 4 }}>{isAccounts ? "Generate annexure files in bank format. Selecting one employee also adds detailed payroll metrics." : "Download attendance registers by department or employee."}</p>
+      </div>
+      <div className="card" style={{ padding: 24, marginBottom: 24 }}>
+        <h3 className="syne" style={{ fontSize: 15, fontWeight: 700, marginBottom: 16 }}>Export Filters</h3>
+        <div className="form-row">
+          <div className="form-group"><label className="label">Month</label><select className="input" value={month} onChange={(e) => setMonth(+e.target.value)}>{["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"].map((label, index) => <option key={label} value={index + 1}>{label}</option>)}</select></div>
+          <div className="form-group"><label className="label">Year</label><select className="input" value={year} onChange={(e) => setYear(+e.target.value)}>{[2024, 2025, 2026, 2027].map((value) => <option key={value} value={value}>{value}</option>)}</select></div>
+          {!isAccounts ? <div className="form-group">
+            <label className="label">Department</label>
+            <select className="input" value={department} onChange={(e) => setDepartment(e.target.value)}>
+              <option value="">All departments</option>
+              {departments.map((item) => <option key={item.id || item.name} value={item.name}>{item.name}</option>)}
+            </select>
+          </div> : null}
+          <div className="form-group">
+            <label className="label">{isAccounts ? "Employee (optional)" : "Employee"}</label>
+            <select className="input" value={employee} onChange={(e) => setEmployee(e.target.value)}>
+              <option value="">All employees</option>
+              {employees.map((item) => <option key={item.emp_id} value={item.emp_id}>{item.emp_id} - {item.first_name} {item.last_name}</option>)}
+            </select>
+          </div>
+        </div>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(240px,1fr))", gap: 16 }}>
+        {[
+          { icon: "📊", label: "Attendance Report", desc: "Attendance XLSX export", color: "#6366f1", path: `/exports/attendance?${query}` },
+          { icon: "💰", label: "Salary Annexure", desc: "Payroll XLSX export", color: "#f59e0b", path: `/exports/annexure?${query}` },
+          { icon: "🛡", label: "BGV PDF Report", desc: "Background verification report", color: "#10b981", path: `/exports/bgv?${bgvQuery}` },
+          { icon: "📈", label: "Performance Report", desc: "Employee performance XLSX", color: "#8b5cf6", path: `/performance/export?month=${month}&year=${year}${employee ? `&emp_id=${employee}` : ""}` },
+        ]
+          .filter((item) => (isAccounts ? item.label === "Salary Annexure" : true))
+          .filter((item) => (item.label === "Salary Annexure" ? canSeeAnnexure : true))
+          .map((item) => (
+          <div key={item.label} className="card" style={{ padding: 24 }}>
+            <div style={{ fontSize: 36, marginBottom: 12 }}>{item.icon}</div>
+            <div style={{ fontWeight: 700, marginBottom: 4 }}>{item.label}</div>
+            <div style={{ fontSize: 13, color: "var(--muted)", marginBottom: 20 }}>{item.desc}</div>
+            <button className="btn-primary" style={{ background: item.color, width: "100%", justifyContent: "center" }} onClick={() => download(item.path, item.label)}>
+              Download
+            </button>
+          </div>
+        ))}
+      </div>
+      {toastNode}
+    </div>
+  );
+}
